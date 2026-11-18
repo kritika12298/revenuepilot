@@ -1,0 +1,34 @@
+{
+  "name": "revenuepilot",
+  "private": true,
+  "version": "0.1.0",
+  "description": "GoDaddy RevenuePilot - AI sales assistant for small businesses",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "npm run dev -w apps/api",
+    "start": "npm run start -w apps/api",
+    "test": "npm run test -w apps/api && npm run test -w apps/web",
+    "lint": "npm run lint -w apps/api && npm run lint -w apps/web",
+    "db:migrate": "npm run db:migrate -w apps/api",
+    "db:deploy": "npm run db:deploy -w apps/api",
+    "db:seed": "npm run db:seed -w apps/api",
+    "db:reset": "npm run db:reset -w apps/api",
+    "worker": "npm run worker -w apps/api",
+    "dev:worker": "npm run dev:worker -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "build": "npm run build -w apps/web",
+    "test:api": "npm run test -w apps/api",
+    "test:web": "npm run test -w apps/web",
+    "demo": "node scripts/demo.mjs"
+  },
+  "allowScripts": {
+    "prisma@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "@prisma/client@6.19.3": true
+  }
+}

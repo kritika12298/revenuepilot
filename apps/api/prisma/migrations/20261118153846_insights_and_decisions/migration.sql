@@ -1,0 +1,6 @@
+-- AlterEnum
+ALTER TYPE "AgentRunKind" ADD VALUE 'SALES_INSIGHTS';
+
+-- AlterEnum
+ALTER TYPE "LeadEventType" ADD VALUE 'AGENT_DECISION';
+

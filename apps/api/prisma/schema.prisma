@@ -1,0 +1,820 @@
+// RevenuePilot database schema.
+//
+// Multi-tenancy: every tenant-owned table carries `businessId`. Repositories
+// always filter by it; there is no query path that reads tenant data without it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum MembershipRole {
+  OWNER
+  MEMBER
+}
+
+enum ServicePriceType {
+  FIXED
+  RANGE
+  QUOTE_ONLY
+}
+
+enum LeadSource {
+  WEB_FORM
+  EMAIL
+  API
+  MANUAL
+}
+
+enum LeadStatus {
+  NEW
+  QUALIFYING
+  QUALIFIED
+  CONTACTED
+  ENGAGED
+  APPOINTMENT_BOOKED
+  WON
+  LOST
+  OPTED_OUT
+}
+
+enum LostReason {
+  PRICE
+  NO_RESPONSE
+  TIMING
+  COMPETITOR
+  POOR_FIT
+  OTHER
+}
+
+enum ConversationChannel {
+  EMAIL
+  WEB_FORM
+  SMS
+  PHONE
+}
+
+enum ConversationStatus {
+  OPEN
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageAuthor {
+  LEAD
+  AI
+  OWNER
+  SYSTEM
+}
+
+enum MessageStatus {
+  RECEIVED
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  CANCELLED
+  SENT
+  FAILED
+}
+
+enum AgentRunKind {
+  ORCHESTRATION
+  QUALIFICATION
+  CONVERSATION
+  FOLLOW_UP_DRAFT
+  LOST_LEAD_ANALYSIS
+  SALES_INSIGHTS
+  MEETING
+  FOLLOW_UP_PLANNING
+  POLICY_CHECK
+  WEBSITE_ANALYSIS
+}
+
+enum AgentRunStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum AgentTrigger {
+  USER
+  LEAD_CREATED
+  INBOUND_MESSAGE
+  ORCHESTRATOR
+  SYSTEM
+}
+
+/// What the backend did with a tool call Claude proposed.
+enum ToolCallOutcome {
+  EXECUTED
+  VALIDATION_FAILED
+  PERMISSION_DENIED
+  POLICY_BLOCKED
+  ERROR
+}
+
+enum EmailDeliveryStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+}
+
+enum NotificationPriority {
+  LOW
+  NORMAL
+  URGENT
+}
+
+enum NotificationReason {
+  HOT_LEAD
+  NEEDS_PRICING_DECISION
+  DISCOUNT_REQUEST
+  QUOTE_REQUEST
+  CUSTOM_REQUEST
+  COMPLAINT
+  OVERDUE_FOLLOW_UP
+  RECOMMENDATION
+  APPOINTMENT
+  WEBSITE_ANALYSIS
+  INTEGRATION_ERROR
+  OTHER
+}
+
+enum AppointmentStatus {
+  PROPOSED
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum KnowledgeType {
+  SERVICE
+  FAQ
+  BUSINESS_INFO
+  CONTACT
+  LOCATION
+  POLICY
+}
+
+enum KnowledgeSource {
+  WEBSITE
+  OWNER
+}
+
+enum KnowledgeStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum WebsiteStatus {
+  QUEUED
+  FETCHING
+  ANALYZING
+  COMPLETED
+  FAILED
+}
+
+enum RecommendationStatus {
+  OPEN
+  DONE
+  DISMISSED
+}
+
+enum IntegrationStatus {
+  NOT_CONFIGURED
+  CONNECTED
+  ERROR
+  DISABLED
+}
+
+enum FollowUpStatus {
+  DRAFTING
+  PENDING_APPROVAL
+  SCHEDULED
+  SENT
+  CANCELLED
+  SKIPPED
+  FAILED
+}
+
+enum ApprovalType {
+  OUTBOUND_MESSAGE
+  DISCOUNT
+  QUOTE
+  CONTRACT
+  CUSTOM_PRICE
+  APPOINTMENT
+  OTHER
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum ActorType {
+  USER
+  AI
+  SYSTEM
+  LEAD
+}
+
+enum LeadEventType {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  SCORE_UPDATED
+  MESSAGE_RECEIVED
+  MESSAGE_SENT
+  FOLLOW_UP_SCHEDULED
+  FOLLOW_UP_DRAFTED
+  FOLLOW_UP_RESCHEDULED
+  FOLLOW_UP_SKIPPED
+  FOLLOW_UP_FAILED
+  FOLLOW_UP_CANCELLED
+  MESSAGE_FAILED
+  APPROVAL_REQUESTED
+  APPROVAL_DECIDED
+  ANALYSIS_UPDATED
+  AGENT_DECISION
+  POLICY_DECISION
+  ASSIGNED
+  APPOINTMENT_PROPOSED
+  APPOINTMENT_BOOKED
+  APPOINTMENT_RESCHEDULED
+  APPOINTMENT_CANCELLED
+  OWNER_NOTIFIED
+  OPTED_OUT
+  NOTE
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy and identity
+// ---------------------------------------------------------------------------
+
+model Business {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  slug         String   @unique
+  timezone     String   @default("UTC")
+  /// e.g. { "mon": [{ "open": "09:00", "close": "17:00" }], ... }
+  workingHours Json     @default("{}") @map("working_hours")
+  /// Tone, follow-up cadence, max follow-ups, preferred channels.
+  commsPrefs   Json     @default("{}") @map("comms_prefs")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  memberships     Membership[]
+  services        Service[]
+  leads           Lead[]
+  conversations   Conversation[]
+  messages        Message[]
+  agentRuns       AgentRun[]
+  followUpJobs    FollowUpJob[]
+  approvals       Approval[]
+  leadEvents      LeadEvent[]
+  toolCalls       AgentToolCall[]
+  notifications   Notification[]
+  deliveries      EmailDelivery[]
+  appointments    Appointment[]
+  website         BusinessWebsite?
+  knowledge       KnowledgeItem[]
+  autonomy        AutonomyPolicy?
+  recommendations Recommendation[]
+  integrations    IntegrationConnection[]
+  auditLogs       AuditLog[]
+
+  @@map("businesses")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  memberships        Membership[]
+  approvalsDecided   Approval[]      @relation("ApprovalDecidedBy")
+  leadEventsAuthored LeadEvent[]     @relation("LeadEventActor")
+  agentRunsTriggered AgentRun[]      @relation("AgentRunTriggeredBy")
+  assignedLeads      Lead[]          @relation("LeadAssignee")
+  knowledgeReviewed  KnowledgeItem[] @relation("KnowledgeReviewer")
+
+  @@map("users")
+}
+
+model Membership {
+  id         String         @id @default(uuid()) @db.Uuid
+  userId     String         @map("user_id") @db.Uuid
+  businessId String         @map("business_id") @db.Uuid
+  role       MembershipRole @default(MEMBER)
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, businessId])
+  @@index([businessId])
+  @@map("memberships")
+}
+
+/// The only source of truth for pricing. The AI must never quote a price
+/// that does not come from this table.
+model Service {
+  id              String           @id @default(uuid()) @db.Uuid
+  businessId      String           @map("business_id") @db.Uuid
+  name            String
+  description     String?
+  priceType       ServicePriceType @map("price_type")
+  priceMinCents   Int?             @map("price_min_cents")
+  priceMaxCents   Int?             @map("price_max_cents")
+  currency        String           @default("USD") @db.Char(3)
+  durationMinutes Int?             @map("duration_minutes")
+  active          Boolean          @default(true)
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, active])
+  @@map("services")
+}
+
+// ---------------------------------------------------------------------------
+// Leads and conversations
+// ---------------------------------------------------------------------------
+
+model Lead {
+  id               String      @id @default(uuid()) @db.Uuid
+  businessId       String      @map("business_id") @db.Uuid
+  name             String
+  email            String?
+  phone            String?
+  company          String?
+  source           LeadSource  @default(MANUAL)
+  status           LeadStatus  @default(NEW)
+  /// 0-100. Null until scored.
+  score            Int?
+  /// { urgency, budgetFit, conversionLikelihood, reasons[], source, scoredAt }
+  scoreBreakdown   Json?       @map("score_breakdown")
+  /// AI-extracted facts: requirements, budget, timeline, intent, missingInfo[]
+  qualification    Json?
+  lostReason       LostReason? @map("lost_reason")
+  consentEmail     Boolean     @default(false) @map("consent_email")
+  consentAt        DateTime?   @map("consent_at")
+  consentSource    String?     @map("consent_source")
+  optedOutAt       DateTime?   @map("opted_out_at")
+  firstResponseAt  DateTime?   @map("first_response_at")
+  lastContactAt    DateTime?   @map("last_contact_at")
+  lastInboundAt    DateTime?   @map("last_inbound_at")
+  lastOutboundAt   DateTime?   @map("last_outbound_at")
+  /// Opaque tokens used in unsubscribe links and reply-to addresses.
+  unsubscribeToken String      @unique @default(dbgenerated("gen_random_uuid()")) @map("unsubscribe_token") @db.Uuid
+  replyToken       String      @unique @default(dbgenerated("gen_random_uuid()")) @map("reply_token") @db.Uuid
+  assignedToId     String?     @map("assigned_to_id") @db.Uuid
+  /// Owner-entered deal value; when null the value is estimated (see the revenue module).
+  dealValueCents   Int?        @map("deal_value_cents")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+
+  business        Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversations   Conversation[]
+  agentRuns       AgentRun[]
+  followUpJobs    FollowUpJob[]
+  approvals       Approval[]
+  events          LeadEvent[]
+  notifications   Notification[]
+  deliveries      EmailDelivery[]
+  appointments    Appointment[]
+  recommendations Recommendation[]
+  assignedTo      User?            @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, status])
+  @@index([businessId, assignedToId])
+  @@index([status, lastOutboundAt])
+  @@index([businessId, createdAt])
+  @@index([businessId, score])
+  @@index([businessId, email])
+  @@map("leads")
+}
+
+model Conversation {
+  id         String              @id @default(uuid()) @db.Uuid
+  businessId String              @map("business_id") @db.Uuid
+  leadId     String              @map("lead_id") @db.Uuid
+  channel    ConversationChannel
+  subject    String?
+  status     ConversationStatus  @default(OPEN)
+  createdAt  DateTime            @default(now()) @map("created_at")
+  updatedAt  DateTime            @updatedAt @map("updated_at")
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([businessId, leadId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String           @id @default(uuid()) @db.Uuid
+  businessId     String           @map("business_id") @db.Uuid
+  conversationId String           @map("conversation_id") @db.Uuid
+  direction      MessageDirection
+  author         MessageAuthor
+  subject        String?
+  body           String
+  status         MessageStatus
+  sentAt         DateTime?        @map("sent_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  business     Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversation Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  followUpJob  FollowUpJob?
+  approvals    Approval[]
+  delivery     EmailDelivery?
+
+  @@index([businessId, conversationId, createdAt])
+  @@map("messages")
+}
+
+// ---------------------------------------------------------------------------
+// AI agent activity, follow-ups, approvals, audit trail
+// ---------------------------------------------------------------------------
+
+/// One invocation of an AI agent. Orchestrator runs are parents of the
+/// sub-agent runs they start, so the whole decision chain can be audited.
+model AgentRun {
+  id            String         @id @default(uuid()) @db.Uuid
+  businessId    String         @map("business_id") @db.Uuid
+  leadId        String?        @map("lead_id") @db.Uuid
+  parentRunId   String?        @map("parent_run_id") @db.Uuid
+  kind          AgentRunKind
+  status        AgentRunStatus @default(PENDING)
+  trigger       AgentTrigger   @default(USER)
+  /// Human-readable description of what triggered the run.
+  triggerDetail String?        @map("trigger_detail")
+  /// Background job attempt number (1 = first try) when run from the queue.
+  jobAttempt    Int?           @map("job_attempt")
+  triggeredById String?        @map("triggered_by_id") @db.Uuid
+  /// "live:<model id>" or "mock".
+  model         String?
+  input         Json?
+  output        Json?
+  stopReason    String?        @map("stop_reason")
+  errorCode     String?        @map("error_code")
+  error         String?
+  iterations    Int            @default(0)
+  inputTokens   Int?           @map("input_tokens")
+  outputTokens  Int?           @map("output_tokens")
+  latencyMs     Int?           @map("latency_ms")
+  startedAt     DateTime?      @map("started_at")
+  finishedAt    DateTime?      @map("finished_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  business      Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lead          Lead?           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  parentRun     AgentRun?       @relation("AgentRunChildren", fields: [parentRunId], references: [id], onDelete: Cascade)
+  childRuns     AgentRun[]      @relation("AgentRunChildren")
+  triggeredBy   User?           @relation("AgentRunTriggeredBy", fields: [triggeredById], references: [id], onDelete: SetNull)
+  toolCalls     AgentToolCall[]
+  approvals     Approval[]
+  notifications Notification[]
+
+  @@index([businessId, createdAt])
+  @@index([businessId, leadId, status])
+  @@index([parentRunId])
+  @@map("agent_runs")
+}
+
+/// Append-only audit of every tool call Claude proposed and what happened.
+model AgentToolCall {
+  id         String          @id @default(uuid()) @db.Uuid
+  businessId String          @map("business_id") @db.Uuid
+  agentRunId String          @map("agent_run_id") @db.Uuid
+  toolUseId  String          @map("tool_use_id")
+  toolName   String          @map("tool_name")
+  input      Json
+  outcome    ToolCallOutcome
+  result     Json?
+  error      String?
+  durationMs Int             @map("duration_ms")
+  createdAt  DateTime        @default(now()) @map("created_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  agentRun AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, agentRunId, createdAt])
+  @@map("agent_tool_calls")
+}
+
+model Appointment {
+  id               String            @id @default(uuid()) @db.Uuid
+  businessId       String            @map("business_id") @db.Uuid
+  leadId           String            @map("lead_id") @db.Uuid
+  serviceId        String?           @map("service_id") @db.Uuid
+  title            String
+  startsAt         DateTime          @map("starts_at")
+  endsAt           DateTime          @map("ends_at")
+  status           AppointmentStatus @default(PROPOSED)
+  location         String?
+  notes            String?
+  /// "mock" or "google".
+  calendarProvider String            @default("mock") @map("calendar_provider")
+  externalEventId  String?           @map("external_event_id")
+  /// Prevents double-booking the same slot from retried tool calls.
+  idempotencyKey   String            @unique @map("idempotency_key")
+  bookedBy         ActorType         @map("booked_by")
+  agentRunId       String?           @map("agent_run_id") @db.Uuid
+  reminderSentAt   DateTime?         @map("reminder_sent_at")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, startsAt])
+  @@index([leadId])
+  @@map("appointments")
+}
+
+/// The business website connected for Website Intelligence (one per business).
+model BusinessWebsite {
+  id           String        @id @default(uuid()) @db.Uuid
+  businessId   String        @unique @map("business_id") @db.Uuid
+  url          String
+  status       WebsiteStatus @default(QUEUED)
+  pagesFetched Int           @default(0) @map("pages_fetched")
+  pages        Json          @default("[]")
+  summary      String?
+  missingInfo  Json          @default("[]") @map("missing_info")
+  lastError    String?       @map("last_error")
+  lastSyncAt   DateTime?     @map("last_sync_at")
+  agentRunId   String?       @map("agent_run_id") @db.Uuid
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  business  Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  knowledge KnowledgeItem[]
+
+  @@map("business_websites")
+}
+
+/// Business knowledge base. Website-extracted items stay PENDING_REVIEW
+/// (inferred) until the owner approves them; only APPROVED items reach the AI.
+model KnowledgeItem {
+  id           String          @id @default(uuid()) @db.Uuid
+  businessId   String          @map("business_id") @db.Uuid
+  websiteId    String?         @map("website_id") @db.Uuid
+  type         KnowledgeType
+  title        String
+  content      String
+  /// Verbatim price text from the source page, if any (never computed).
+  priceText    String?         @map("price_text")
+  source       KnowledgeSource
+  status       KnowledgeStatus @default(PENDING_REVIEW)
+  sourceUrl    String?         @map("source_url")
+  /// Snippet from the page that supports the item.
+  evidence     String?
+  reviewedById String?         @map("reviewed_by_id") @db.Uuid
+  reviewedAt   DateTime?       @map("reviewed_at")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+
+  business   Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  website    BusinessWebsite? @relation(fields: [websiteId], references: [id], onDelete: SetNull)
+  reviewedBy User?            @relation("KnowledgeReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([businessId, status, type])
+  @@map("knowledge_items")
+}
+
+/// What the agents may do without asking. Financial commitments (discounts,
+/// quotes, contracts) always require approval and are not configurable.
+model AutonomyPolicy {
+  businessId            String   @id @map("business_id") @db.Uuid
+  autoScoreLeads        Boolean  @default(true) @map("auto_score_leads")
+  autoGenerateResponses Boolean  @default(true) @map("auto_generate_responses")
+  autoSendResponses     Boolean  @default(false) @map("auto_send_responses")
+  autoScheduleFollowUps Boolean  @default(true) @map("auto_schedule_follow_ups")
+  autoApproveFollowUps  Boolean  @default(false) @map("auto_approve_follow_ups")
+  autoBookAppointments  Boolean  @default(false) @map("auto_book_appointments")
+  maxAutoEmailsPerDay   Int      @default(50) @map("max_auto_emails_per_day")
+  updatedById           String?  @map("updated_by_id") @db.Uuid
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("autonomy_policies")
+}
+
+/// Proactive recommendations. dedupeKey keeps one row per situation.
+model Recommendation {
+  id              String               @id @default(uuid()) @db.Uuid
+  businessId      String               @map("business_id") @db.Uuid
+  leadId          String?              @map("lead_id") @db.Uuid
+  type            String
+  dedupeKey       String               @map("dedupe_key")
+  priority        String
+  title           String
+  reason          String
+  suggestedAction String               @map("suggested_action")
+  data            Json                 @default("{}")
+  impact          Json?
+  status          RecommendationStatus @default(OPEN)
+  resolvedAt      DateTime?            @map("resolved_at")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lead     Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, dedupeKey])
+  @@index([businessId, status, priority])
+  @@map("recommendations")
+}
+
+/// Per-business integration settings. Secrets are AES-256-GCM encrypted.
+model IntegrationConnection {
+  id          String            @id @default(uuid()) @db.Uuid
+  businessId  String            @map("business_id") @db.Uuid
+  provider    String
+  status      IntegrationStatus @default(NOT_CONFIGURED)
+  config      Json              @default("{}")
+  secretsEnc  String?           @map("secrets_enc")
+  lastSyncAt  DateTime?         @map("last_sync_at")
+  lastError   String?           @map("last_error")
+  connectedAt DateTime?         @map("connected_at")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, provider])
+  @@map("integration_connections")
+}
+
+/// Security-relevant changes (settings, autonomy, integrations, knowledge).
+model AuditLog {
+  id          String    @id @default(uuid()) @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  actorType   ActorType @map("actor_type")
+  actorUserId String?   @map("actor_user_id") @db.Uuid
+  action      String
+  entityType  String    @map("entity_type")
+  entityId    String?   @map("entity_id")
+  data        Json      @default("{}")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, createdAt])
+  @@map("audit_logs")
+}
+
+/// Alerts raised for the business owner (by the AI or the system).
+model Notification {
+  id         String               @id @default(uuid()) @db.Uuid
+  businessId String               @map("business_id") @db.Uuid
+  leadId     String?              @map("lead_id") @db.Uuid
+  agentRunId String?              @map("agent_run_id") @db.Uuid
+  priority   NotificationPriority @default(NORMAL)
+  reason     NotificationReason
+  message    String
+  /// Prevents the same alert being raised twice.
+  dedupeKey  String?              @map("dedupe_key")
+  readAt     DateTime?            @map("read_at")
+  createdAt  DateTime             @default(now()) @map("created_at")
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lead     Lead?     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  agentRun AgentRun? @relation(fields: [agentRunId], references: [id], onDelete: SetNull)
+
+  @@unique([businessId, dedupeKey])
+  @@index([businessId, readAt, createdAt])
+  @@index([businessId, leadId, reason, createdAt])
+  @@map("notifications")
+}
+
+model FollowUpJob {
+  id              String         @id @default(uuid()) @db.Uuid
+  businessId      String         @map("business_id") @db.Uuid
+  leadId          String         @map("lead_id") @db.Uuid
+  messageId       String?        @unique @map("message_id") @db.Uuid
+  step            Int            @default(1)
+  scheduledFor    DateTime       @map("scheduled_for")
+  status          FollowUpStatus @default(DRAFTING)
+  /// The sent message this follow-up is chasing (null for manual follow-ups).
+  anchorMessageId String?        @map("anchor_message_id") @db.Uuid
+  /// Agent run that drafted the message.
+  draftRunId      String?        @map("draft_run_id") @db.Uuid
+  /// Current BullMQ job id (draft or send).
+  queueJobId      String?        @map("queue_job_id")
+  skipReason      String?        @map("skip_reason")
+  lastError       String?        @map("last_error")
+  attempts        Int            @default(0)
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  message  Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, status, scheduledFor])
+  @@index([leadId])
+  @@map("follow_up_jobs")
+}
+
+/// One email send attempt chain for one message. `idempotencyKey` is unique
+/// and is also sent to the provider, so a message can never go out twice.
+model EmailDelivery {
+  id                String              @id @default(uuid()) @db.Uuid
+  businessId        String              @map("business_id") @db.Uuid
+  leadId            String              @map("lead_id") @db.Uuid
+  messageId         String              @unique @map("message_id") @db.Uuid
+  idempotencyKey    String              @unique @map("idempotency_key")
+  provider          String
+  toAddress         String              @map("to_address")
+  status            EmailDeliveryStatus @default(PENDING)
+  providerMessageId String?             @map("provider_message_id")
+  attempts          Int                 @default(0)
+  lastError         String?             @map("last_error")
+  sentAt            DateTime?           @map("sent_at")
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  message  Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, status, createdAt])
+  @@map("email_deliveries")
+}
+
+/// Anything that needs a human decision before it takes effect: outbound
+/// messages, discounts, quotes, appointments.
+model Approval {
+  id           String         @id @default(uuid()) @db.Uuid
+  businessId   String         @map("business_id") @db.Uuid
+  leadId       String?        @map("lead_id") @db.Uuid
+  messageId    String?        @map("message_id") @db.Uuid
+  agentRunId   String?        @map("agent_run_id") @db.Uuid
+  type         ApprovalType
+  status       ApprovalStatus @default(PENDING)
+  payload      Json
+  aiRationale  String?        @map("ai_rationale")
+  decidedById  String?        @map("decided_by_id") @db.Uuid
+  decidedAt    DateTime?      @map("decided_at")
+  decisionNote String?        @map("decision_note")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  business  Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lead      Lead?     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  message   Message?  @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  agentRun  AgentRun? @relation(fields: [agentRunId], references: [id], onDelete: SetNull)
+  decidedBy User?     @relation("ApprovalDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([businessId, status, createdAt])
+  @@map("approvals")
+}
+
+/// Append-only timeline of everything that happened to a lead.
+model LeadEvent {
+  id          String        @id @default(uuid()) @db.Uuid
+  businessId  String        @map("business_id") @db.Uuid
+  leadId      String        @map("lead_id") @db.Uuid
+  type        LeadEventType
+  actorType   ActorType     @map("actor_type")
+  actorUserId String?       @map("actor_user_id") @db.Uuid
+  data        Json          @default("{}")
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  business  Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  actorUser User?    @relation("LeadEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, leadId, createdAt])
+  @@map("lead_events")
+}

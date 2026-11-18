@@ -1,0 +1,28 @@
+# Local infrastructure for development. Bound to localhost only.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: revenuepilot
+      POSTGRES_PASSWORD: revenuepilot
+      POSTGRES_DB: revenuepilot
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U revenuepilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Job queue for follow-ups and email delivery (BullMQ).
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+
+volumes:
+  pgdata:
